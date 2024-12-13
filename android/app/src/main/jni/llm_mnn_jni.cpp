@@ -24,7 +24,7 @@ JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved) {
     __android_log_print(ANDROID_LOG_DEBUG, "MNN_DEBUG", "JNI_OnUnload");
 }
 
-JNIEXPORT jboolean JNICALL Java_com_mnn_llm_Chat_Init(JNIEnv* env, jobject thiz, jstring modelDir) {
+JNIEXPORT jboolean JNICALL Java_com_jdo_imageocr_mnn_Chat_Init(JNIEnv* env, jobject thiz, jstring modelDir) {
     const char* model_dir = env->GetStringUTFChars(modelDir, 0);
     if (!llm.get()) {
         llm.reset(Llm::createLLM(model_dir));
@@ -33,14 +33,14 @@ JNIEXPORT jboolean JNICALL Java_com_mnn_llm_Chat_Init(JNIEnv* env, jobject thiz,
     return JNI_TRUE;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_mnn_llm_Chat_Ready(JNIEnv* env, jobject thiz) {
+JNIEXPORT jboolean JNICALL Java_com_jdo_imageocr_mnn_Chat_Ready(JNIEnv* env, jobject thiz) {
     if (llm.get()) {
         return JNI_TRUE;
     }
     return JNI_FALSE;
 }
 
-JNIEXPORT jstring JNICALL Java_com_mnn_llm_Chat_Submit(JNIEnv* env, jobject thiz, jstring inputStr) {
+JNIEXPORT jstring JNICALL Java_com_jdo_imageocr_mnn_Chat_Submit(JNIEnv* env, jobject thiz, jstring inputStr) {
     if (!llm.get()) {
         return env->NewStringUTF("Failed, Chat is not ready!");
     }
@@ -54,19 +54,45 @@ JNIEXPORT jstring JNICALL Java_com_mnn_llm_Chat_Submit(JNIEnv* env, jobject thiz
     return result;
 }
 
-JNIEXPORT jbyteArray JNICALL Java_com_mnn_llm_Chat_Response(JNIEnv* env, jobject thiz) {
+JNIEXPORT jbyteArray JNICALL Java_com_jdo_imageocr_mnn_Chat_Response(JNIEnv* env, jobject thiz) {
     auto len = response_buffer.str().size();
     jbyteArray res = env->NewByteArray(len);
     env->SetByteArrayRegion(res, 0, len, (const jbyte*)response_buffer.str().c_str());
     return res;
 }
 
-JNIEXPORT void JNICALL Java_com_mnn_llm_Chat_Done(JNIEnv* env, jobject thiz) {
+JNIEXPORT void JNICALL Java_com_jdo_imageocr_mnn_Chat_Done(JNIEnv* env, jobject thiz) {
     response_buffer.str("");
 }
 
-JNIEXPORT void JNICALL Java_com_mnn_llm_Chat_Reset(JNIEnv* env, jobject thiz) {
+JNIEXPORT void JNICALL Java_com_jdo_imageocr_mnn_Chat_Reset(JNIEnv* env, jobject thiz) {
     llm->reset();
 }
+
+JNIEXPORT void JNICALL Java_com_jdo_imageocr_mnn_Chat_Stop(JNIEnv* env, jobject thiz) {
+    llm->stop();
+}
+
+
+JNIEXPORT void JNICALL Java_com_jdo_imageocr_mnn_Chat_Print(JNIEnv* env, jobject thiz) {
+    llm->print_speed();
+}
+
+JNIEXPORT jstring JNICALL Java_com_jdo_imageocr_mnn_Chat_Prefill(JNIEnv* env, jobject thiz) {
+    if (!llm) {
+        return env->NewStringUTF("Llm instance is not initialized.");
+    }
+    std::string result = llm->get_prefill_speed();
+    return env->NewStringUTF(result.c_str()); // 将 std::string 转换为 jstring 返回
+}
+
+JNIEXPORT jstring JNICALL Java_com_jdo_imageocr_mnn_Chat_Decode(JNIEnv* env, jobject thiz) {
+    if (!llm) {
+        return env->NewStringUTF("Llm instance is not initialized.");
+    }
+    std::string result = llm->get_decode_speed();
+    return env->NewStringUTF(result.c_str()); // 将 std::string 转换为 jstring 返回
+}
+
 
 } // extern "C"

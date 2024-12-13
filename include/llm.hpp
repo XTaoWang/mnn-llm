@@ -72,6 +72,7 @@ public:
     virtual ~Llm();
     void chat();
     void reset();
+    void stop();
     static Llm* createLLM(const std::string& config_path);
     virtual void load();
     VARP forward(const std::vector<int>& input_ids);
@@ -84,6 +85,8 @@ public:
     std::string generate(const std::vector<int>& input_ids, std::ostream* os, const char* end_with);
     std::vector<int> generate(const std::vector<int>& input_ids, int max_new_tokens = -1);
     void print_speed();
+    std::string get_prefill_speed();
+    std::string get_decode_speed();
     // config function
     std::string dump_config();
     bool set_config(const std::string& content);
@@ -93,6 +96,17 @@ public:
     bool release_module(size_t index);
     bool select_module(size_t index);
     friend class Pipeline;
+
+    bool stop_generation_ = false; // 新增停止标志位
+    // 停止生成的方法
+    void stop_generation() {
+        stop_generation_ = true;
+    }
+    // 重置停止标志位，允许下一次生成继续
+    void reset_generation() {
+        stop_generation_ = false;
+    }
+
 public:
     // forward info
     int prompt_len_ = 0;

@@ -17,6 +17,8 @@
 #include "llm.hpp"
 #include "llmconfig.hpp"
 #include "tokenizer.hpp"
+#include <android/log.h>
+#define LOG_TAG "Llm"
 
 #ifdef LLM_SUPPORT_VISION
 #include "httplib.h"
@@ -117,12 +119,12 @@ void Llm::load() {
         runtime_manager_->setExternalFile(config_->llm_weight());
         if (attention_fused_) {
             modules_[0].reset(Module::load(
-                                           {"input_ids", "attention_mask", "position_ids"},
-                                           {"logits"}, model_path.c_str(), runtime_manager_, &module_config));
+                    {"input_ids", "attention_mask", "position_ids"},
+                    {"logits"}, model_path.c_str(), runtime_manager_, &module_config));
         } else {
             modules_[0].reset(Module::load(
-                                           {"input_ids", "attention_mask", "position_ids", "past_key_values"},
-                                           {"logits", "presents"}, model_path.c_str(), runtime_manager_, &module_config));
+                    {"input_ids", "attention_mask", "position_ids", "past_key_values"},
+                    {"logits", "presents"}, model_path.c_str(), runtime_manager_, &module_config));
         }
         MNN_PRINT("Load Module Done!\n");
     } else {
@@ -301,6 +303,13 @@ void Llm::reset() {
     all_seq_len_ = 0;
 }
 
+void Llm::stop() {
+    stop_generation_ = true;  // 设置停止标志为 true
+    gen_seq_len_ = 0;      // 重置生成的序列长度
+    prefill_us_ = 0;       // 清空填充时间
+    decode_us_ = 0;        // 清空解码时间
+}
+
 void Llm::generate_init() {
     // init status
     gen_seq_len_ = 0;
@@ -351,6 +360,8 @@ std::vector<int> Llm::generate(const std::vector<int>& input_ids, int max_new_to
 }
 
 std::string Llm::generate(const std::vector<int>& input_ids, std::ostream* os, const char* end_with) {
+    // 重置 stop_generation_ 为 false
+    stop_generation_ = false;
     prompt_len_ = static_cast<int>(input_ids.size());
     history_ids_.insert(history_ids_.end(), input_ids.begin(), input_ids.end()); // push to history_ids_
     auto st = std::chrono::system_clock::now();
@@ -379,7 +390,7 @@ std::string Llm::generate(const std::vector<int>& input_ids, std::ostream* os, c
         token = sample(logits, history_ids_);
         et = std::chrono::system_clock::now();
         decode_us_ += std::chrono::duration_cast<std::chrono::microseconds>(et - st).count();
-        if (is_stop(token)) {
+        if (is_stop(token) || stop_generation_) {  // stop_generation_ 检查停止标志，若为 true 则停止生成
             *os << end_with << std::flush;
             break;
         }
@@ -396,6 +407,7 @@ std::string Llm::generate(const std::vector<int>& input_ids, std::ostream* os, c
 
 std::vector<int> Llm::tokenizer(const std::string& query) {
     auto prompt = apply_prompt_template(query);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "111111 num = %s", prompt.c_str());
     auto input_ids = tokenizer_->encode(prompt);
     return input_ids;
 }
@@ -411,8 +423,11 @@ std::string Llm::response(const std::string& user_content, std::ostream* os, con
         }
         input_ids = tokenizer_->encode(prompt);
     } else {
+//        打印输入文本
+//        __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "111111 num = %s", user_content.c_str());
         input_ids = tokenizer(user_content);
     }
+//    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "111111 num = %d", input_ids.size());
     return generate(input_ids, os, end_with);
 }
 
@@ -427,27 +442,68 @@ std::string Llm::response(const std::vector<PromptItem>& chat_prompts, std::ostr
     // std::cout << "# prompt : " << prompt << std::endl;
     auto input_ids = tokenizer_->encode(prompt);
     // printf("input_ids (%lu): ", input_ids.size()); for (auto id : input_ids) printf("%d, ", id); printf("\n");
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "111111 num = %d", input_ids.size());
     return generate(input_ids, os, end_with);
 }
+
+//void Llm::print_speed() {
+//    auto prefill_s = prefill_us_ * 1e-6;
+//    auto decode_s = decode_us_ * 1e-6;
+//    auto total_s = prefill_s + decode_s;
+//    printf("\n#################################\n");
+//    printf(" total tokens num  = %d\n", prompt_len_ + gen_seq_len_);
+//    printf("prompt tokens num  = %d\n", prompt_len_);
+//    printf("output tokens num  = %d\n", gen_seq_len_);
+//    printf("  total time = %.2f s\n", total_s);
+//    printf("prefill time = %.2f s\n", prefill_s);
+//    printf(" decode time = %.2f s\n", decode_s);
+//    printf("  total speed = %.2f tok/s\n", (prompt_len_ + gen_seq_len_) / total_s);
+//    printf("prefill speed = %.2f tok/s\n", prompt_len_ / prefill_s);
+//    printf(" decode speed = %.2f tok/s\n", gen_seq_len_ / decode_s);
+//    printf("   chat speed = %.2f tok/s\n", gen_seq_len_ / total_s);
+//    printf("##################################\n");
+//}
 
 void Llm::print_speed() {
     auto prefill_s = prefill_us_ * 1e-6;
     auto decode_s = decode_us_ * 1e-6;
     auto total_s = prefill_s + decode_s;
-    printf("\n#################################\n");
-    printf(" total tokens num  = %d\n", prompt_len_ + gen_seq_len_);
-    printf("prompt tokens num  = %d\n", prompt_len_);
-    printf("output tokens num  = %d\n", gen_seq_len_);
-    printf("  total time = %.2f s\n", total_s);
-    printf("prefill time = %.2f s\n", prefill_s);
-    printf(" decode time = %.2f s\n", decode_s);
-    printf("  total speed = %.2f tok/s\n", (prompt_len_ + gen_seq_len_) / total_s);
-    printf("prefill speed = %.2f tok/s\n", prompt_len_ / prefill_s);
-    printf(" decode speed = %.2f tok/s\n", gen_seq_len_ / decode_s);
-    printf("   chat speed = %.2f tok/s\n", gen_seq_len_ / total_s);
-    printf("##################################\n");
+
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "total tokens num = %d", prompt_len_ + gen_seq_len_);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "prompt tokens num = %d", prompt_len_);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "output tokens num = %d", gen_seq_len_);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "total time = %.2f s", total_s);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "prefill time = %.2f s", prefill_s);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "decode time = %.2f s", decode_s);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "total speed = %.2f tok/s", (prompt_len_ + gen_seq_len_) / total_s);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "prefill speed = %.2f tok/s", prompt_len_ / prefill_s);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "decode speed = %.2f tok/s", gen_seq_len_ / decode_s);
+    __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, "chat speed = %.2f tok/s", gen_seq_len_ / total_s);
 }
 
+std::string Llm::get_prefill_speed() {
+    if (prefill_us_ <= 0 || prompt_len_ <= 0) {
+        return "Prefill speed: N/A (Invalid data)";
+    }
+    auto prefill_s = prefill_us_ * 1e-6; // 微秒转秒
+    double prefill_speed = prompt_len_ / prefill_s;
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+    oss << "Prefill speed: " << prefill_speed << " tok/s";
+    return oss.str();
+}
+
+std::string Llm::get_decode_speed() {
+    if (decode_us_ <= 0 || gen_seq_len_ <= 0) {
+        return "Decode speed: N/A (Invalid data)";
+    }
+    auto decode_s = decode_us_ * 1e-6; // 微秒转秒
+    double decode_speed = gen_seq_len_ / decode_s;
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+    oss << "Decode speed: " << decode_speed << " tok/s";
+    return oss.str();
+}
 
 Llm::~Llm() {
     current_modules_.clear();
@@ -781,8 +837,8 @@ void Embedding::load() {
     MNN_PRINT("load %s ... ", model_path.c_str());
     modules_.resize(1);
     modules_[0].reset(Module::load(
-                                   {"input_ids", "attention_mask", "position_ids"},
-                                   {"sentence_embeddings"}, model_path.c_str(), runtime_manager_, &module_config));
+            {"input_ids", "attention_mask", "position_ids"},
+            {"sentence_embeddings"}, model_path.c_str(), runtime_manager_, &module_config));
     MNN_PRINT("Done!\n");
 }
 
@@ -924,10 +980,10 @@ std::vector<std::string> Document::split(int chunk_size) {
     // judge from extention
     if (type_ == DOCTYPE::AUTO) {
         static const std::unordered_map<std::string, DOCTYPE> extensionMap = {
-            {".txt",  DOCTYPE::TXT},
-            {".md",   DOCTYPE::MD},
-            {".html", DOCTYPE::HTML},
-            {".pdf",  DOCTYPE::PDF}
+                {".txt",  DOCTYPE::TXT},
+                {".md",   DOCTYPE::MD},
+                {".html", DOCTYPE::HTML},
+                {".pdf",  DOCTYPE::PDF}
         };
         size_t dotIndex = path_.find_last_of(".");
         if (dotIndex != std::string::npos) {
@@ -1106,8 +1162,8 @@ void ChatMemory::add(const std::vector<Prompt>& prompts) {
         if (prompt.type == PROMPT_TYPE::ASSISTANT) {
             response = prompt.str;
             json new_entry = {
-                {"query", query},
-                {"response", response}
+                    {"query", query},
+                    {"response", response}
             };
             history[date].push_back(new_entry);
         }
@@ -1220,10 +1276,10 @@ void Pipeline::invoke(const std::string& str) {
 bool Pipeline::need_memory(const std::string& str) {
     // TODO: using lm model to judge
     const std::vector<std::string> contextKeywords = {
-        "之前", "先前", "上次", "那天", "刚才", "我们谈过", "你说过", "记得吗", "如你所提",
-        "你提到", "你提及", "你记得", "你还记得", "上回", "上一次", "那一次", "前面", "过去",
-        "以前", "历史上", "之间讨论", "之间的对话", "那时候", "曾经", "你曾说", "你曾提到",
-        "最近谈到", "最近说过", "你之前说过"
+            "之前", "先前", "上次", "那天", "刚才", "我们谈过", "你说过", "记得吗", "如你所提",
+            "你提到", "你提及", "你记得", "你还记得", "上回", "上一次", "那一次", "前面", "过去",
+            "以前", "历史上", "之间讨论", "之间的对话", "那时候", "曾经", "你曾说", "你曾提到",
+            "最近谈到", "最近说过", "你之前说过"
     };
     for (const auto& keyword : contextKeywords) {
         if (str.find(keyword) != std::string::npos) {
